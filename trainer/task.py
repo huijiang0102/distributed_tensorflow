@@ -58,18 +58,18 @@ def main():
     w = tf.Variable(0.0, name="weight")
     b = tf.Variable(0.0, name="bias")
     global_step = tf.Variable(0, name='global_step', trainable=False)
-    loss = tf.reduce_sum(tf.square(Y - tf.mul(X, w) - b))
+    loss = tf.reduce_sum(tf.square(Y - X * w - b))
     train_op = optimizer.minimize(loss, global_step=global_step)
-    predict_op = tf.mul(X, w) + b
-    tf.scalar_summary('loss', loss)
-    summary_op = tf.merge_all_summaries()
-    init_op = tf.initialize_all_variables()
+    predict_op = X * w + b
+    tf.summary.scalar('loss', loss)
+    summary_op = tf.summary.merge_all()
+    init_op = tf.global_variables_initializer()
     # saver = tf.train.Saver()
 
     with tf.Session() as sess:
       sess.run(init_op)
       print("Save tensorboard files into: {}".format(FLAGS.tensorboard_dir))
-      writer = tf.train.SummaryWriter(FLAGS.tensorboard_dir, sess.graph)
+      writer = tf.summary.FileWriter(FLAGS.tensorboard_dir, sess.graph)
 
       print("Run training with epoch number: {}".format(FLAGS.max_epochs))
       for i in range(FLAGS.max_epochs):
@@ -125,12 +125,12 @@ def main():
         w = tf.Variable(0.0, name="weight")
         b = tf.Variable(0.0, name="bias")
         global_step = tf.Variable(0, name='global_step', trainable=False)
-        loss = tf.reduce_sum(tf.square(Y - tf.mul(X, w) - b))
+        loss = tf.reduce_sum(tf.square(Y - X * w - b))
         train_op = optimizer.minimize(loss, global_step=global_step)
-        predict_op = tf.mul(X, w) + b
-        tf.scalar_summary('loss', loss)
-        summary_op = tf.merge_all_summaries()
-        init_op = tf.initialize_all_variables()
+        predict_op = X * w + b
+        tf.summary.scalar('loss', loss)
+        summary_op = tf.summary.merge_all()
+        init_op = tf.global_variables_initializer()
         #saver = tf.train.Saver()
         saver = tf.train.Saver(sharded=True)
 
@@ -147,7 +147,7 @@ def main():
             print(
                 "Save tensorboard files into: {}".format(FLAGS.tensorboard_dir)
             )
-            writer = tf.train.SummaryWriter(FLAGS.tensorboard_dir, sess.graph)
+            writer = tf.summary.FileWriter(FLAGS.tensorboard_dir, sess.graph)
 
             print(
                 "Run training with epoch number: {}".format(FLAGS.max_epochs))
