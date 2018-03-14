@@ -31,15 +31,6 @@ flags.DEFINE_integer("model_version", 1, "The version of the model")
 FLAGS = flags.FLAGS
 
 
-def create_done_queue(i):
-  with tf.device("/job:ps/task:%d" % (i)):
-    return tf.FIFOQueue(1, tf.int32, shared_name="done_queue" + str(i))
-
-
-def create_done_queues():
-  return [create_done_queue(i) for i in range(1)]
-
-
 def main():
   # Create train data
   train_X = np.linspace(-1, 1, 100)
@@ -118,27 +109,45 @@ def main():
   else:
     # Exampmle: {"cluster": {"ps": ["127.0.0.1:3001"], "worker": ["127.0.0.1:3002", "127.0.0.1:3003"], "master": ["127.0.0.1:3004"]}, "task": {"index": 0, "type": "master"}}
     env = json.loads(os.environ.get("TF_CONFIG", "{}"))
-    task_data = env.get("task", None)
+
     cluster_spec = env["cluster"]
+    task_data = env.get("task", None)
     task_type = task_data["type"]
     task_index = task_data["index"]
+    ps_data = cluster_spec["ps"]
+    worker_data = cluster_spec["worker"]
+    ps_number = len(ps_data)
+    worker_number = len(worker_data)
+    master_worker_number = worker_number + 1
 
     cluster = tf.train.ClusterSpec(cluster_spec)
     server = tf.train.Server(
         cluster, job_name=task_type, task_index=task_index)
 
+    worker_done_queues = []
+
+    for i in range(ps_number):
+      with tf.device("/job:ps/task:{}".format(i)):
+        queue = tf.FIFOQueue(
+            master_worker_number,
+            tf.int32,
+            shared_name="worker_done_queue_{}".format(i))
+        worker_done_queues.append(queue)
+
     if task_type == "ps":
       #server.join()
 
       sess = tf.Session(server.target)
-      queue = create_done_queue(task_index)
 
-      # wait until all workers are done
-      for i in range(1):
-        sess.run(queue.dequeue())
-        print("ps %d received done %d" % (task_index, i))
+      queue = worker_done_queues[task_index]
+      dequeue_op = queue.dequeue()
 
-      print("ps %d: quitting" % (task_index))
+      # Block until all workers are done
+      for i in range(master_worker_number):
+        sess.run(dequeue_op)
+        logging.info("{} workers are already done".format(i + 1))
+
+      logging.info("PS exists after all workers done")
 
     elif task_type == "worker" or task_type == "master":
       with tf.device(
@@ -163,28 +172,10 @@ def main():
         saver = tf.train.Saver()
         #saver = tf.train.Saver(sharded=True)
 
-        enq_ops = []
-        for q in create_done_queues():
-          qop = q.enqueue(1)
-          enq_ops.append(qop)
-        """
-        constant_model_version = tf.constant(FLAGS.model_version)
-        model_exporter = exporter.Exporter(saver)
-        model_exporter.init(
-            tf.get_default_graph().as_graph_def(),
-            named_graph_signatures={
-                "inputs":
-                exporter.generic_signature({
-                    "keys": keys_placeholder,
-                    "X": X
-                }),
-                "outputs":
-                exporter.generic_signature({
-                    "keys": keys,
-                    "predict": predict_op
-                })
-            })
-        """
+        enqueue_ops = []
+        for queue in worker_done_queues:
+          enqueue_op = queue.enqueue(1)
+          enqueue_ops.append(enqueue_op)
 
         model_signature = signature_def_utils.build_signature_def(
             inputs={
@@ -276,8 +267,9 @@ def main():
             print("[{}] End of distributed training.".format(
                 end_training_time - start_training_time))
 
-            for op in enq_ops:
-              sess.run(op)
+            logging.info("Enqueue the data to queue to notify ps")
+            for enqueue_op in enqueue_ops:
+              sess.run(enqueue_op)
 
             if task_type == "master":
               #print("Exporting trained model to {}".format(FLAGS.model_path))
